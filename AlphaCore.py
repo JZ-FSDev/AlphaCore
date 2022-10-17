@@ -7,26 +7,25 @@ import matplotlib.pyplot as plt
 
 # alphaCore ranking of nodes in a complex, directed network
 #
-# \code{alphaCore} returns a node ranking of a graph
-#
 # Iteratively computes a node ranking based on a feature set derived from
 # edge attributes and optionally static node features using the
 # mahalanobis data depth function at the origin.
 #
 # @param graph A networkx directed graph
-# @param stepSize defines the stepsize of each iteration as percentage of node count
-# @param startEpsi the epsilon to start with. Removes all nodes with depth>epsilon at start
-# @param expoDecay dynamically reduces the step size, to have high cores with few nodes if true
-# @return A dataframe of node name and alpha value indicating the ranking
+# @param stepSize Defines the stepsize of each iteration as percentage of node count
+# @param startEpsi The epsilon to start with. Removes all nodes with depth>epsilon at start
+# @param expoDecay Dynamically reduces the step size, to have high cores with few nodes if true
+# @return A dataframe of columns nodeID, alpha value, and batchID
 def alphaCore(graph, stepSize, startEpsi, expoDecay):
     #1
     data = computeNodeFeatures(graph)
     #2 #3 calculate the Mahalanobis depth and add it to the respective row of the dataframe
-    data['mahal'] = calculateMahal(y=data[['inDegree', 'inStrength']], data=data[['inDegree', 'inStrength']])
+    data['mahal'] = calculateMahalFromCenter(data, 0)
     #4
     epsi = startEpsi
     #5
-    core = {}
+    node = []
+    alphaVals = []
     #6
     batch = []
     #7
@@ -43,9 +42,11 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
             #12
             for index, row in data.iterrows():
                 if row['mahal'] >= epsi:
+                    print(row)
                     depthFound = True
                     #13
-                    core[row['nodeID']] = alphaPrev  # set node core
+                    node.append(row['nodeID'])  # set node core
+                    alphaVals.append(alphaPrev)
                     #14
                     batch.append(batchID)
                     #15
@@ -55,10 +56,11 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
             #19 while condition of do-while loop of #11
             if graph.number_of_nodes() == 0 or not depthFound:
                 break
+            # if graph.number_of_nodes() > 1:  # prevent error when trying to compute depth when only one node remains
             #17
             data = computeNodeFeatures(graph)  # recompute node properties
             #18
-            data['mahal'] = calculateMahal(y=data[['inDegree', 'inStrength']], data=data[['inDegree', 'inStrength']])  # recompute depth
+            data['mahal'] = calculateMahalFromCenter(data, 0)  # recompute depth
         #20
         alphaPrev = alpha
         #21
@@ -71,10 +73,13 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
         #22
         alpha = 1 - epsi
     #23
-    return [core, batch]
+    return pd.DataFrame({'nodeID': node, 'alpha': alphaVals, 'batchID': batch})
 
 
-# computes the node features of a given directed graph and returns a dataframe containing the features of each node
+# Computes the node features of a given directed graph and returns a dataframe containing the features of each node
+#
+# @param graph A networkx directed graph
+# @return A dataframe containing the computed node features with each row as a new entry and columns as different features
 def computeNodeFeatures(graph):
     nodeID = []
     inDegree = []
@@ -98,19 +103,34 @@ def computeNodeFeatures(graph):
         outStrength.append(outStrengthNode)
 
     # currently only adding inDegree and inStrength to dataframe
-    nodeFeat = {"nodeID": nodeID, "inDegree": inDegree, "inStrength": inStrength}
-    df = pd.DataFrame(nodeFeat, columns=['nodeID', 'inDegree', 'inStrength'])
+    # df = pd.DataFrame({"nodeID": nodeID, "inDegree": inDegree, "inStrength": inStrength})
+
+    # currently adding inDegree, outDegree, inStrength, and outStrength to dataframe
+    df = pd.DataFrame({"nodeID": nodeID, "inDegree": inDegree, "inStrength": inStrength, "outDegree": outDegree, "outStrength": outStrength})
     return df
 
 
-# computes the mahalanobis depth of a given set of data and returns the diagonal
-def calculateMahal(y, data):
-    y_mu = y - np.mean(data)
-    cov = np.cov(data.values.T)
-    inv_covmat = np.linalg.inv(cov)
-    left = np.dot(y_mu, inv_covmat)
-    mahal = np.dot(left, y_mu.T)
-    return mahal.diagonal()
+
+# Computes the mahalanobis depth of each row of a given set of data and returns it as an array
+#
+# @param data Dataframe where each row is a new entry and each column after the first (nodeID) is a type of data
+# @param center A center value calculated with respect to when computing mahalanobis depth
+# @return An array containing the mahalanobis depth of each row entry of a given set of data
+def calculateMahalFromCenter(data, center):
+    matrix = data.drop("nodeID", axis=1)  # convert dataframe to numeric matrix by removing first column containing nodeID
+    # print(matrix)
+    x_minus_center = matrix.values - center
+    # print(x_minus_center)
+    x_minus_center_transposed = (matrix.values - center).T
+    # print(x_minus_center_transposed)
+    cov = np.cov(matrix.values.T)
+    # print(cov)
+    inv_cov = np.linalg.inv(cov)
+    # print(inv_cov)
+    left = np.dot(x_minus_center, inv_cov)
+    mahal = np.dot(left, x_minus_center_transposed)
+    return np.diagonal(np.reciprocal(1+mahal))  # diagonal contains the depth vaulues corresponding to each row from matrix
+
 
 
 #########################################  Aux Functions #########################################
@@ -149,14 +169,25 @@ G = nx.DiGraph()
 
 count = 0
 for item in items:
+    # if item[1] not in G.nodes:
+    #     G.add_node(item[1])
+    # if item[2] not in G.nodes:
+    #     G.add_node(item[2])
     G.add_edge(item[0], item[1], value=item[2])
     count += 1
-    if count == 1000: # terminate building of graph at 1000 vertices
+    if count == 30: # terminate building of graph at count vertices
         break
 
 print("Graph Made")
 
-alph = alphaCore(G, 0.1, 0.1, False)
+alph = alphaCore(G, 0.1, 1, False)
 print("Alphacore function completed")
 
 print(alph)
+
+### Test calculateMahalFromCenter function ###
+# nodeFeat = computeNodeFeatures(G)
+# print(nodeFeat)
+# nodeFeat['mahal'] = calculateMahalFromCenter(nodeFeat, 0)
+# print('mahal')
+# print(nodeFeat)
