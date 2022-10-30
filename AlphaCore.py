@@ -1,5 +1,6 @@
 import sqlite3 as sql
 import networkx as nx
+from networkx import k_core
 import numpy as np
 import pandas as pd
 import math
@@ -16,6 +17,9 @@ import matplotlib.pyplot as plt
 # @param startEpsi The epsilon to start with. Removes all nodes with depth>epsilon at start
 # @param expoDecay Dynamically reduces the step size, to have high cores with few nodes if true
 # @return A dataframe of columns nodeID, alpha value, and batchID
+
+
+
 def alphaCore(graph, stepSize, startEpsi, expoDecay):
     #1
     data = computeNodeFeatures(graph)
@@ -36,13 +40,14 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
     batchID = 0
     #10
     while graph.number_of_nodes() > 0:
+        print(graph.number_of_nodes())
         #11
         while True:
             depthFound = False  # to simulate do-while loop; used to check if there exists a node with depth >= epsi on current iteration
             #12
             for index, row in data.iterrows():
                 if row['mahal'] >= epsi:
-                    print(row)
+                    # print(row)
                     depthFound = True
                     #13
                     node.append(row['nodeID'])  # set node core
@@ -66,8 +71,11 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
         #21
         if expoDecay and graph.number_of_nodes() > 0:  # exponential decay
             localStepSize = math.ceil(graph.number_of_nodes() * stepSize)
-            data.sort_values(ascending=False, by=['mahal'])
-            epsi = data.at[localStepSize - 1, 'mahal']
+            data = data.sort_values(ascending=False, by=['mahal'])
+            # print(data)
+            epsi = data.iloc[localStepSize - 1]['mahal']
+            print("epsi")
+            print(epsi)
         else:  # step decay
             epsi -= stepSize
         #22
@@ -81,6 +89,7 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
 # @param graph A networkx directed graph
 # @return A dataframe containing the computed node features with each row as a new entry and columns as different features
 def computeNodeFeatures(graph):
+    print("computing")
     nodeID = []
     inDegree = []
     outDegree = []
@@ -88,19 +97,19 @@ def computeNodeFeatures(graph):
     outStrength = []
     for node in graph:
         nodeID.append(node)
-        inEdges = graph.in_edges(node)
-        outEdges = graph.out_edges(node)
-        edgeAttributes = nx.get_edge_attributes(graph, "value")
-        inStrengthNode = 0
-        outStrengthNode = 0
-        for edge in inEdges:
-            inStrengthNode += edgeAttributes[edge]
-        for edge in outEdges:
-            outStrengthNode += edgeAttributes[edge]
+        # inEdges = graph.in_edges(node)
+        # outEdges = graph.out_edges(node)
+        # edgeAttributes = nx.get_edge_attributes(graph, "value")
+        # inStrengthNode = 0
+        # outStrengthNode = 0
+        # for edge in inEdges:
+        #     inStrengthNode += edgeAttributes[edge]
+        # for edge in outEdges:
+        #     outStrengthNode += edgeAttributes[edge]
         inDegree.append(graph.in_degree(node))
         outDegree.append(graph.out_degree(node))
-        inStrength.append(inStrengthNode)
-        outStrength.append(outStrengthNode)
+        inStrength.append(graph.in_degree(node, "value"))
+        outStrength.append(graph.out_degree(node, "value"))
 
     # currently only adding inDegree and inStrength to dataframe
     # df = pd.DataFrame({"nodeID": nodeID, "inDegree": inDegree, "inStrength": inStrength})
@@ -117,6 +126,7 @@ def computeNodeFeatures(graph):
 # @param center A center value calculated with respect to when computing mahalanobis depth
 # @return An array containing the mahalanobis depth of each row entry of a given set of data
 def calculateMahalFromCenter(data, center):
+    print("calculating mahal")
     matrix = data.drop("nodeID", axis=1)  # convert dataframe to numeric matrix by removing first column containing nodeID
     # print(matrix)
     x_minus_center = matrix.values - center
@@ -169,10 +179,6 @@ G = nx.DiGraph()
 
 count = 0
 for item in items:
-    # if item[1] not in G.nodes:
-    #     G.add_node(item[1])
-    # if item[2] not in G.nodes:
-    #     G.add_node(item[2])
     G.add_edge(item[0], item[1], value=item[2])
     count += 1
     if count == 30: # terminate building of graph at count vertices
@@ -180,14 +186,38 @@ for item in items:
 
 print("Graph Made")
 
-alph = alphaCore(G, 0.1, 1, False)
+alph = alphaCore(G, 0.1, 1, True)
 print("Alphacore function completed")
 
 print(alph)
 
-### Test calculateMahalFromCenter function ###
+# ## Test calculateMahalFromCenter function ###
 # nodeFeat = computeNodeFeatures(G)
 # print(nodeFeat)
 # nodeFeat['mahal'] = calculateMahalFromCenter(nodeFeat, 0)
 # print('mahal')
 # print(nodeFeat)
+
+
+#########################################  Compare Alpha to K-Core  #########################################
+
+
+# conn1 = sql.connect('Apr30.db')
+# c1 = conn1.cursor()
+# c1.execute("SELECT * FROM token_transfers")
+# items = c1.fetchall()
+# G = nx.DiGraph()
+#
+# for item in items:
+#     G.add_edge(item[0], item[1], value=item[2])
+#
+# print("Graph Made")
+#
+# alph = alphaCore(G, 0.1, 1, False)
+# print("Alphacore function completed")
+#
+# print(alph)
+#
+# G2 = k_core(G)
+#
+# print(G2)
