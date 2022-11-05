@@ -17,14 +17,14 @@ import matplotlib.pyplot as plt
 # @param startEpsi The epsilon to start with. Removes all nodes with depth>epsilon at start
 # @param expoDecay Dynamically reduces the step size, to have high cores with few nodes if true
 # @return A dataframe of columns nodeID, alpha value, and batchID
-
-
-
 def alphaCore(graph, stepSize, startEpsi, expoDecay):
     #1
     data = computeNodeFeatures(graph)
-    #2 #3 calculate the Mahalanobis depth and add it to the respective row of the dataframe
-    data['mahal'] = calculateMahalFromCenter(data, 0)
+    #2 compute cov matrix to be used for all remainder of depth calculations
+    matrix = data.drop("nodeID", axis=1)  # convert dataframe to numeric matrix by removing first column containing nodeID
+    cov = np.cov(matrix.values.T)
+    #3 calculate the Mahalanobis depth and add it to the respective row of the dataframe
+    data['mahal'] = calculateMahalFromCenter(data, 0, cov)
     #4
     epsi = startEpsi
     #5
@@ -65,7 +65,7 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
             #17
             data = computeNodeFeatures(graph)  # recompute node properties
             #18
-            data['mahal'] = calculateMahalFromCenter(data, 0)  # recompute depth
+            data['mahal'] = calculateMahalFromCenter(data, 0, cov)  # recompute depth
         #20
         alphaPrev = alpha
         #21
@@ -74,8 +74,6 @@ def alphaCore(graph, stepSize, startEpsi, expoDecay):
             data = data.sort_values(ascending=False, by=['mahal'])
             # print(data)
             epsi = data.iloc[localStepSize - 1]['mahal']
-            print("epsi")
-            print(epsi)
         else:  # step decay
             epsi -= stepSize
         #22
@@ -97,15 +95,6 @@ def computeNodeFeatures(graph):
     outStrength = []
     for node in graph:
         nodeID.append(node)
-        # inEdges = graph.in_edges(node)
-        # outEdges = graph.out_edges(node)
-        # edgeAttributes = nx.get_edge_attributes(graph, "value")
-        # inStrengthNode = 0
-        # outStrengthNode = 0
-        # for edge in inEdges:
-        #     inStrengthNode += edgeAttributes[edge]
-        # for edge in outEdges:
-        #     outStrengthNode += edgeAttributes[edge]
         inDegree.append(graph.in_degree(node))
         outDegree.append(graph.out_degree(node))
         inStrength.append(graph.in_degree(node, "value"))
@@ -124,8 +113,9 @@ def computeNodeFeatures(graph):
 #
 # @param data Dataframe where each row is a new entry and each column after the first (nodeID) is a type of data
 # @param center A center value calculated with respect to when computing mahalanobis depth
+# @param cov The covariance matrix of the data matrix
 # @return An array containing the mahalanobis depth of each row entry of a given set of data
-def calculateMahalFromCenter(data, center):
+def calculateMahalFromCenter(data, center, cov):
     print("calculating mahal")
     matrix = data.drop("nodeID", axis=1)  # convert dataframe to numeric matrix by removing first column containing nodeID
     # print(matrix)
@@ -133,12 +123,11 @@ def calculateMahalFromCenter(data, center):
     # print(x_minus_center)
     x_minus_center_transposed = (matrix.values - center).T
     # print(x_minus_center_transposed)
-    cov = np.cov(matrix.values.T)
-    # print(cov)
     inv_cov = np.linalg.inv(cov)
     # print(inv_cov)
     left = np.dot(x_minus_center, inv_cov)
     mahal = np.dot(left, x_minus_center_transposed)
+    print("done mahal")
     return np.diagonal(np.reciprocal(1+mahal))  # diagonal contains the depth vaulues corresponding to each row from matrix
 
 
@@ -157,7 +146,7 @@ def graphToFigure(graph):
                     arrowprops=dict(arrowstyle="->", color="0.5",
                                     shrinkA=5, shrinkB=5,
                                     patchA=None, patchB=None,
-                                    connectionstyle="arc3,rad=rrr".replace('rrr',str(0.3*e[2])
+                                    connectionstyle="arc3,rad=rrr".replace('rrr',str(0.3*e[1])
                                     ),
                                     ),
                     )
@@ -171,25 +160,25 @@ def graphToFigure(graph):
 
 #########################################  Test Alphacore Script #########################################
 
-conn1 = sql.connect('AlphaTest.db')
-c1 = conn1.cursor()
-c1.execute("SELECT * FROM token_transfers")
-items = c1.fetchall()
-G = nx.DiGraph()
-
-count = 0
-for item in items:
-    G.add_edge(item[0], item[1], value=item[2])
-    count += 1
-    if count == 30: # terminate building of graph at count vertices
-        break
-
-print("Graph Made")
-
-alph = alphaCore(G, 0.1, 1, True)
-print("Alphacore function completed")
-
-print(alph)
+# conn1 = sql.connect('AlphaTest.db')
+# c1 = conn1.cursor()
+# c1.execute("SELECT * FROM token_transfers")
+# items = c1.fetchall()
+# G = nx.DiGraph()
+#
+# count = 0
+# for item in items:
+#     G.add_edge(item[0], item[1], value=item[2])
+#     count += 1
+#     if count == 30: # terminate building of graph at count vertices
+#         break
+#
+# print("Graph Made")
+#
+# alph = alphaCore(G, 0.1, 1, True)
+# print("Alphacore function completed")
+#
+# print(alph)
 
 # ## Test calculateMahalFromCenter function ###
 # nodeFeat = computeNodeFeatures(G)
@@ -202,22 +191,52 @@ print(alph)
 #########################################  Compare Alpha to K-Core  #########################################
 
 
-# conn1 = sql.connect('Apr30.db')
+conn1 = sql.connect('Apr30.db')
+c1 = conn1.cursor()
+c1.execute("SELECT * FROM token_transfers")
+items = c1.fetchall()
+G = nx.DiGraph()
+
+count = 0
+selfLoop = 0
+for item in items:
+    if item[0] == item[1]:
+        selfLoop += 1
+    G.add_edge(item[0], item[1], value=item[2])
+    # count += 1
+    # if count == 75000:
+    #     break
+
+print("Graph Made")
+print(selfLoop)
+
+G.remove_edges_from(nx.selfloop_edges(G))
+G2 = k_core(G)
+print(G2)
+nx.draw(G2)
+plt.savefig("Apr30.png")
+
+# alph = alphaCore(G, 0.1, 1, False)
+# print("Alphacore function completed")
+#
+# print(alph)
+
+
+
+
+######################################
+
+# conn1 = sql.connect('defi.db')
 # c1 = conn1.cursor()
 # c1.execute("SELECT * FROM token_transfers")
 # items = c1.fetchall()
 # G = nx.DiGraph()
 #
 # for item in items:
-#     G.add_edge(item[0], item[1], value=item[2])
+#     G.add_edge(item[2], item[3], value=item[6])
+#     if item[0] > 15693289:
+#         break
 #
 # print("Graph Made")
-#
-# alph = alphaCore(G, 0.1, 1, False)
-# print("Alphacore function completed")
-#
-# print(alph)
-#
-# G2 = k_core(G)
-#
-# print(G2)
+# print(G.number_of_nodes())
+# print(G.number_of_edges())
